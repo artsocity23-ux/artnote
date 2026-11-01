@@ -1,0 +1,18 @@
+{
+  "name": "artnote",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Screenshot a region, mark it up with arrows and numbered comments, paste the result into chat.",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "npm run grab || echo grab.exe was not built, ArtNote will use the slower desktopCapturer",
+    "selftest": "electron . --selftest selftest-out",
+    "icon": "node make-icon.js",
+    "grab": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe -nologo -optimize -target:winexe -out:grab.exe -r:System.Drawing.dll -r:System.Windows.Forms.dll grab.cs"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1"
+  }
+}
