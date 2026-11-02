@@ -10,7 +10,9 @@ const qrcode = require('qrcode-generator');
 const clip = require('./clip');
 
 const ROOT = __dirname;
-const SELFTEST = process.argv.includes('--selftest');
+const DEMO = process.argv.includes('--demo'); // records docs/demo.gif, see demo.js
+const SELFTEST = DEMO || process.argv.includes('--selftest');
+if (DEMO) app.disableHardwareAcceleration(); // capturePage gave UnknownVizError on the GPU path; software records reliably
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 const APP_ID = 'io.github.artsocity23ux.artnote';
@@ -539,7 +541,7 @@ if (!SELFTEST && !app.requestSingleInstanceLock()) {
     if (!SELFTEST) return init();
     nativeTheme.themeSource = 'dark';
     const api = { openFromClipboard, startCapture, prepareOverlays, openDonate, setNotesDir: dir => { notesDir = dir; } };
-    require('./selftest')(api).catch(err => {
+    require(DEMO ? './demo' : './selftest')(api).catch(err => {
       console.error(err);
       app.exit(1);
     });
