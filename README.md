@@ -94,7 +94,15 @@
 
 ArtNote безкоштовний і з відкритим кодом. Якщо він економить тобі час на правках — підтримати автора можна з меню в треї («Підтримати автора ♥») або тут:
 
-<!-- donate -->
+| Монета | Мережа | Адреса |
+|---|---|---|
+| USDT | лише Tron (TRC20) | `TLzNJFQUgD7AqqdCggQdm7ogX4UPHrmZqV` |
+| BTC | лише Bitcoin | `115jhb9iiWF99C5uaC6N27T4QVLmkmY2E8` |
+| USDC | лише BNB Smart Chain (BEP20) | `0x87d6a63b18b351d34211cc4b04e28494c1eb963a` |
+| SOL | лише Solana | `E2duNyxT8zmqEUwFuupoi8xJHBH4bt1axStYKrhS3M4x` |
+| ADA | лише Cardano | `addr1vylp2e0g50p029ar76rvtavwq0wrazh63a60uazju482k2gz96gpm` |
+
+Надсилай кожну монету тільки в зазначеній мережі: переказ через іншу мережу загубиться. QR-коди для телефонного гаманця є у вікні «Підтримати автора ♥» у меню програми.
 
 ## Запуск із коду
 
