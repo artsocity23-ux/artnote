@@ -4,3 +4,4 @@ artnote.log*
 grab.exe
 # personal settings; see config.example.json
 config.json
+dist/

@@ -1,0 +1,12 @@
+{
+  "crypto": [
+    { "name": "USDT", "network": "TRC-20 (Tron)", "address": "" },
+    { "name": "Bitcoin", "network": "BTC", "address": "" },
+    { "name": "Ethereum", "network": "ERC-20 · також USDT / USDC", "address": "" }
+  ],
+  "links": [
+    { "name": "Ko-fi", "url": "" },
+    { "name": "Buy Me a Coffee", "url": "" },
+    { "name": "PayPal", "url": "" }
+  ]
+}

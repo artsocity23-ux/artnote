@@ -1,5 +1,5 @@
 // Renders the ArtNote icon (dark tile, yellow arrow pointing at a red numbered pin) with signed distance
-// fields and writes icon.png, icon.ico and the tray sizes. Run once: `node make-icon.js`.
+// fields and writes icon.png, icon.ico, the tray sizes and build/icon.png for the installers. Run once: `node make-icon.js`.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -116,4 +116,6 @@ out('icon.ico', ico([16, 24, 32, 48, 256]));
 out('tray.png', png(16));
 out('tray@1.5x.png', png(24));
 out('tray@2x.png', png(32));
+fs.mkdirSync(path.join(__dirname, 'build'), { recursive: true });
+out('build/icon.png', png(1024)); // macOS and Linux installers want a big one
 console.log('icons written');

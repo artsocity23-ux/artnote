@@ -11,4 +11,9 @@ contextBridge.exposeInMainWorld('artnote', {
   shotReady: () => ipcRenderer.send('artnote:shot-ready'),
   select: rect => ipcRenderer.send('artnote:select', rect),
   cancel: () => ipcRenderer.send('artnote:cancel'),
+  // donate window
+  donate: () => ipcRenderer.invoke('artnote:donate'),
+  donateCopy: i => ipcRenderer.invoke('artnote:donate-copy', i),
+  donateOpen: i => ipcRenderer.send('artnote:donate-open', i),
+  donateReady: height => ipcRenderer.send('artnote:donate-ready', height),
 });

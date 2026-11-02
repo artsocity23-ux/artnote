@@ -1,23 +1,39 @@
 const {
-  app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, nativeTheme, ipcMain, shell, screen, desktopCapturer,
+  app, BrowserWindow, Tray, Menu, Notification, globalShortcut, nativeImage, nativeTheme, ipcMain, shell, screen,
+  desktopCapturer, dialog, systemPreferences,
 } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const qrcode = require('qrcode-generator');
 const clip = require('./clip');
 
 const ROOT = __dirname;
 const SELFTEST = process.argv.includes('--selftest');
-const LOG = path.join(ROOT, 'artnote.log');
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const APP_ID = 'io.github.artsocity23ux.artnote';
+// An installed build keeps settings and the log in the per-user app data folder, a source checkout beside the code.
+const DATA = app.isPackaged ? app.getPath('userData') : ROOT;
+const LOG = path.join(DATA, 'artnote.log');
+const CONFIG = path.join(DATA, 'config.json');
+const GRAB = app.isPackaged ? path.join(process.resourcesPath, 'grab.exe') : path.join(ROOT, 'grab.exe');
+const LINUX_AUTOSTART = path.join(os.homedir(), '.config', 'autostart', 'artnote.desktop');
 
 const config = {
   hotkey: 'Super+Alt+A',
-  fallbackHotkey: 'Shift+PrintScreen',
-  notesDir: path.join(os.homedir(), 'Documents', 'ART_NOTES'),
-  ...readJSON(path.join(ROOT, 'config.json')),
+  fallbackHotkey: IS_MAC ? '' : 'Shift+PrintScreen',
+  notesDir: path.join(app.getPath('documents'), 'ART_NOTES'),
+  ...readJSON(CONFIG),
 };
 let notesDir = config.notesDir;
+
+// Donation options live in donate.json; entries left empty are not shown. The self-test may pass its own file.
+const donateArg = SELFTEST ? process.argv.indexOf('--donate') : -1;
+const donate = readJSON(donateArg > 0 ? process.argv[donateArg + 1] : path.join(ROOT, 'donate.json'));
+const donateCrypto = (donate.crypto || []).filter(c => c.address);
+const donateLinks = (donate.links || []).filter(l => /^https:\/\//.test(l.url || ''));
 
 let tray = null;
 let hotkeyLabel = '';
@@ -30,6 +46,7 @@ const images = new Map(); // webContents.id -> nativeImage of the picked region
 function log(...parts) {
   if (SELFTEST) return;
   try {
+    fs.mkdirSync(DATA, { recursive: true });
     if (fs.existsSync(LOG) && fs.statSync(LOG).size > 256 * 1024) fs.renameSync(LOG, `${LOG}.old`);
     fs.appendFileSync(LOG, `${new Date().toLocaleString('sv')} ${parts.join(' ')}\n`);
   } catch {
@@ -48,13 +65,18 @@ function readJSON(file) {
   }
 }
 
+function saveConfig(patch) {
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(CONFIG, JSON.stringify({ ...readJSON(CONFIG), ...patch }, null, 2));
+}
+
 // ---------- screen grab ----------
 
 // grab.exe stays running and answers every newline on stdin with one raw BGRA capture of the virtual screen.
 const grabber = { proc: null, chunks: [], got: 0, head: null, waiter: null };
 
 function startGrabber() {
-  const proc = spawn(path.join(ROOT, 'grab.exe'), [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  const proc = spawn(GRAB, [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
   Object.assign(grabber, { proc, chunks: [], got: 0, head: null });
   const fail = err => {
     if (grabber.proc === proc) grabber.proc = null;
@@ -96,18 +118,20 @@ function grabVirtualScreen() {
   });
 }
 
-// Returns display.id -> nativeImage in physical pixels.
+// Returns display.id -> nativeImage in physical pixels. grab.exe on Windows, desktopCapturer elsewhere.
 async function captureDisplays(displays) {
   const out = new Map();
-  try {
-    const { x, y, image } = await grabVirtualScreen();
-    for (const d of displays) {
-      const r = screen.dipToScreenRect(null, d.bounds);
-      out.set(d.id, image.crop({ x: r.x - x, y: r.y - y, width: r.width, height: r.height }));
+  if (IS_WIN && fs.existsSync(GRAB)) {
+    try {
+      const { x, y, image } = await grabVirtualScreen();
+      for (const d of displays) {
+        const r = screen.dipToScreenRect(null, d.bounds);
+        out.set(d.id, image.crop({ x: r.x - x, y: r.y - y, width: r.width, height: r.height }));
+      }
+      return out;
+    } catch (err) {
+      log('grab.exe failed, using desktopCapturer:', err.message);
     }
-    return out;
-  } catch (err) {
-    log('grab.exe failed, using desktopCapturer:', err.message);
   }
   const physical = d => ({ width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) });
   const thumbnailSize = displays.map(physical).reduce((a, b) => ({
@@ -143,6 +167,7 @@ async function overlayFor(display) {
       webPreferences: { preload: path.join(ROOT, 'preload.js'), backgroundThrottling: false },
     });
     win.setAlwaysOnTop(true, 'screen-saver');
+    if (IS_MAC) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     overlays.set(display.id, win);
     await win.loadFile(path.join(ROOT, 'overlay.html'));
   } else if (win.webContents.isLoading()) {
@@ -165,6 +190,12 @@ function prepareOverlays() {
 // Freezes every screen, then shows the picker on top; the editor opens with the region the user drags.
 async function startCapture() {
   if (picking) return endPicking(); // the hotkey again cancels
+  // macOS asks for Screen Recording on the first capture; once refused, captures only show the wallpaper.
+  if (IS_MAC && systemPreferences.getMediaAccessStatus('screen') === 'denied') {
+    notify('Дозволь ArtNote запис екрана в System Settings → Privacy & Security, потім перезапусти ArtNote');
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    return;
+  }
   picking = true;
   pickStart = Date.now();
   const displays = screen.getAllDisplays();
@@ -201,6 +232,7 @@ ipcMain.on('artnote:shot-ready', e => {
   const id = displayOf(e.sender);
   if (!picking || !shots.has(id)) return;
   const win = overlays.get(id);
+  if (IS_MAC) app.focus({ steal: true }); // a tray-only app is never frontmost on its own
   win.show();
   if (id === screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id) win.focus();
   log(`capture: picker shown after ${Date.now() - pickStart}ms`);
@@ -273,6 +305,7 @@ function openEditor(img) {
   win.once('ready-to-show', () => {
     // Stay on top briefly in case Windows refuses to hand over focus, so the editor is never hidden.
     win.setAlwaysOnTop(true);
+    if (IS_MAC) app.focus({ steal: true });
     win.show();
     win.focus();
     setTimeout(() => !win.isDestroyed() && win.setAlwaysOnTop(false), 1500);
@@ -337,13 +370,67 @@ function markdown(name, { width, height, pins, texts }) {
   return lines.join('\n');
 }
 
+// ---------- donate window ----------
+
+let donateWin = null;
+
+function openDonate() {
+  if (donateWin && !donateWin.isDestroyed()) return donateWin.focus();
+  donateWin = new BrowserWindow({
+    width: 480,
+    height: 520,
+    useContentSize: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    show: false,
+    title: 'Підтримати ArtNote',
+    icon: path.join(ROOT, 'icon.png'),
+    backgroundColor: '#15171c',
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(ROOT, 'preload.js') },
+  });
+  donateWin.loadFile(path.join(ROOT, 'donate.html'));
+  return donateWin;
+}
+
+// Quiet zone of 4 modules, as wallet scanners expect.
+function qrDataURL(text) {
+  const code = qrcode(0, 'M');
+  code.addData(text);
+  code.make();
+  const svg = code.createSvgTag({ cellSize: 4, margin: 16, scalable: true });
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
+ipcMain.handle('artnote:donate', () => ({
+  crypto: donateCrypto.map(c => ({ name: c.name, network: c.network, address: c.address, qr: qrDataURL(c.address) })),
+  links: donateLinks.map(l => l.name),
+}));
+
+ipcMain.handle('artnote:donate-copy', (e, i) => clip.writeText(donateCrypto[i]?.address || ''));
+
+ipcMain.on('artnote:donate-open', (e, i) => donateLinks[i] && shell.openExternal(donateLinks[i].url));
+
+// The page reports its height once laid out, so the window fits however many options are filled in.
+ipcMain.on('artnote:donate-ready', (e, height) => {
+  if (!donateWin || donateWin.isDestroyed() || e.sender !== donateWin.webContents) return;
+  const { workArea } = screen.getDisplayMatching(donateWin.getBounds());
+  donateWin.setContentSize(480, Math.min(Math.ceil(height), workArea.height - 40));
+  donateWin.center();
+  if (IS_MAC) app.focus({ steal: true });
+  donateWin.show();
+});
+
 // ---------- tray ----------
+
+const KEY_NAMES = { Super: IS_WIN ? 'Win' : IS_MAC ? 'Cmd' : 'Super', Alt: IS_MAC ? 'Option' : 'Alt', Control: 'Ctrl' };
 
 function registerHotkey() {
   for (const key of [config.hotkey, config.fallbackHotkey].filter(Boolean)) {
     try {
       if (globalShortcut.register(key, () => { log(`hotkey ${key}`); startCapture(); })) {
-        hotkeyLabel = key.replace('Super', 'Win').replace('Control', 'Ctrl');
+        hotkeyLabel = key.replace(/Super|Alt|Control/g, k => KEY_NAMES[k]);
         return;
       }
       log(`hotkey ${key} is taken by another program`);
@@ -353,42 +440,82 @@ function registerHotkey() {
   }
 }
 
+// Windows and macOS keep login items themselves; Linux desktops start whatever is in ~/.config/autostart.
 function loginOptions() {
-  return { path: process.execPath, args: [ROOT] };
+  return IS_WIN && !app.isPackaged ? { path: process.execPath, args: [ROOT] } : {};
+}
+
+function autostart() {
+  if (IS_WIN || IS_MAC) return app.getLoginItemSettings(loginOptions()).openAtLogin;
+  return fs.existsSync(LINUX_AUTOSTART);
+}
+
+function setAutostart(on) {
+  try {
+    if (IS_WIN || IS_MAC) return app.setLoginItemSettings({ ...loginOptions(), openAtLogin: on });
+    if (!on) return fs.rmSync(LINUX_AUTOSTART, { force: true });
+    const exec = [process.env.APPIMAGE || process.execPath, ...(app.isPackaged ? [] : [ROOT])].map(a => `"${a}"`).join(' ');
+    fs.mkdirSync(path.dirname(LINUX_AUTOSTART), { recursive: true });
+    fs.writeFileSync(LINUX_AUTOSTART, `[Desktop Entry]\nType=Application\nName=ArtNote\nExec=${exec}\nX-GNOME-Autostart-enabled=true\n`);
+  } catch (err) {
+    log('autostart:', err.message);
+  }
+}
+
+async function chooseNotesDir() {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Куди зберігати правки',
+    defaultPath: notesDir,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (canceled || !filePaths[0]) return;
+  notesDir = filePaths[0];
+  saveConfig({ notesDir });
+  log(`notes dir: ${notesDir}`);
+}
+
+function openSettings() {
+  if (!fs.existsSync(CONFIG)) saveConfig({ hotkey: config.hotkey, fallbackHotkey: config.fallbackHotkey, notesDir });
+  shell.openPath(CONFIG);
 }
 
 function buildMenu() {
-  const { openAtLogin } = app.getLoginItemSettings(loginOptions());
+  const canDonate = donateCrypto.length || donateLinks.length;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: hotkeyLabel ? `Нова правка\t${hotkeyLabel}` : 'Нова правка', click: startCapture },
+    { label: hotkeyLabel ? `Нова правка${IS_MAC ? '   ' : '\t'}${hotkeyLabel}` : 'Нова правка', click: startCapture },
     { label: 'Правка з буфера обміну', click: openFromClipboard },
-    { label: 'Відкрити папку з правками', click: () => { fs.mkdirSync(notesDir, { recursive: true }); shell.openPath(notesDir); } },
     { type: 'separator' },
+    { label: 'Відкрити папку з правками', click: () => { fs.mkdirSync(notesDir, { recursive: true }); shell.openPath(notesDir); } },
+    { label: 'Змінити папку для правок…', click: chooseNotesDir },
+    { label: 'Файл налаштувань (хоткей)', click: openSettings },
     {
-      label: 'Запускати разом з Windows',
+      label: IS_WIN ? 'Запускати разом з Windows' : 'Запускати при вході в систему',
       type: 'checkbox',
-      checked: openAtLogin,
-      click: item => app.setLoginItemSettings({ ...loginOptions(), openAtLogin: item.checked }),
+      checked: autostart(),
+      click: item => setAutostart(item.checked),
     },
     { type: 'separator' },
+    ...(canDonate ? [{ label: 'Підтримати автора ♥', click: openDonate }, { type: 'separator' }] : []),
     { label: 'Вийти', click: () => app.quit() },
   ]));
 }
 
 function notify(content) {
   log('notify:', content);
-  tray?.displayBalloon({ title: 'ArtNote', content, iconType: 'info' });
+  if (IS_WIN) tray?.displayBalloon({ title: 'ArtNote', content, iconType: 'info' });
+  else if (Notification.isSupported()) new Notification({ title: 'ArtNote', body: content }).show();
 }
 
 function init() {
   nativeTheme.themeSource = 'dark';
-  app.setAppUserModelId('ArtNote');
+  if (IS_WIN) app.setAppUserModelId(app.isPackaged ? APP_ID : 'ArtNote');
+  app.dock?.hide(); // macOS: live in the menu bar only
   registerHotkey();
   tray = new Tray(nativeImage.createFromPath(path.join(ROOT, 'tray.png')));
   tray.setToolTip(hotkeyLabel ? `ArtNote · ${hotkeyLabel}` : 'ArtNote · хоткей зайнятий, клікни по іконці');
   tray.on('click', () => { log('tray click'); startCapture(); });
   buildMenu();
-  grabVirtualScreen().catch(() => {}); // the first GDI capture is ~3x slower, pay for it at startup
+  if (IS_WIN) grabVirtualScreen().catch(() => {}); // the first GDI capture is ~3x slower, pay for it at startup
   prepareOverlays();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(event, () => !picking && prepareOverlays());
@@ -411,7 +538,7 @@ if (!SELFTEST && !app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (!SELFTEST) return init();
     nativeTheme.themeSource = 'dark';
-    const api = { openFromClipboard, startCapture, prepareOverlays, setNotesDir: dir => { notesDir = dir; } };
+    const api = { openFromClipboard, startCapture, prepareOverlays, openDonate, setNotesDir: dir => { notesDir = dir; } };
     require('./selftest')(api).catch(err => {
       console.error(err);
       app.exit(1);

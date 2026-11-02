@@ -1,18 +1,85 @@
 {
   "name": "artnote",
+  "productName": "ArtNote",
   "version": "0.2.0",
   "private": true,
   "description": "Screenshot a region, mark it up with arrows and numbered comments, paste the result into chat.",
+  "author": {
+    "name": "artsocity23-ux",
+    "email": "263427273+artsocity23-ux@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/artsocity23-ux/artnote",
+  "repository": "github:artsocity23-ux/artnote",
   "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "postinstall": "npm run grab || echo grab.exe was not built, ArtNote will use the slower desktopCapturer",
+    "postinstall": "node build/grab.js",
     "selftest": "electron . --selftest selftest-out",
     "icon": "node make-icon.js",
-    "grab": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe -nologo -optimize -target:winexe -out:grab.exe -r:System.Drawing.dll -r:System.Windows.Forms.dll grab.cs"
+    "grab": "node build/grab.js",
+    "dist": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
-    "electron": "^45.2.1"
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.artsocity23ux.artnote",
+    "productName": "ArtNote",
+    "copyright": "© 2026 artsocity23-ux · MIT",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "clip.js",
+      "overlay.html",
+      "overlay.js",
+      "editor.html",
+      "editor.js",
+      "editor.css",
+      "donate.html",
+      "donate.js",
+      "donate.json",
+      "icon.png",
+      "tray*.png"
+    ],
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "icon.ico",
+      "extraResources": [{ "from": "grab.exe", "to": "grab.exe" }]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "shortcutName": "ArtNote",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Graphics",
+      "icon": "build/icon.png",
+      "synopsis": "Screenshot, mark up and paste art-direction notes",
+      "maintainer": "artsocity23-ux <263427273+artsocity23-ux@users.noreply.github.com>"
+    }
   }
 }

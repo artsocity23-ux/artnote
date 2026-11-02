@@ -1,7 +1,7 @@
 // End-to-end check without a human: `electron . --selftest <outdir>`.
 // Opens the editor on a generated image, draws with real mouse/keyboard input, screenshots the
 // window, presses Enter and records what was saved and what landed in the clipboard.
-const { app, BrowserWindow, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, clipboard, nativeImage, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const clip = require('./clip');
@@ -43,7 +43,7 @@ function testImage(w, h) {
   return nativeImage.createFromBitmap(buf, { width: w, height: h });
 }
 
-module.exports = async function selftest({ openFromClipboard, startCapture, prepareOverlays, setNotesDir }) {
+module.exports = async function selftest({ openFromClipboard, startCapture, prepareOverlays, openDonate, setNotesDir }) {
   const argIndex = process.argv.indexOf('--selftest');
   const out = path.resolve(process.argv[argIndex + 1] || 'selftest-out');
   fs.mkdirSync(out, { recursive: true });
@@ -160,6 +160,19 @@ module.exports = async function selftest({ openFromClipboard, startCapture, prep
       })()`);
       editor.destroy();
     }
+  }
+
+  // Donate window, only when a test donate file is passed with --donate <file>.
+  if (process.argv.includes('--donate')) {
+    const win = openDonate();
+    await until(() => win.isVisible());
+    await wait(300);
+    fs.writeFileSync(path.join(out, 'donate.png'), (await win.webContents.capturePage()).toPNG());
+    report.donate = { size: win.getContentSize(), coins: await win.webContents.executeJavaScript("document.querySelectorAll('.coin').length") };
+    await win.webContents.executeJavaScript("document.querySelector('.coin button').click()");
+    await wait(300);
+    report.donate.copied = await clipboard.readText();
+    win.destroy();
   }
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
 
