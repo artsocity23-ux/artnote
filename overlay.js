@@ -44,6 +44,7 @@ addEventListener('pointerdown', e => {
     return;
   }
   if (e.button !== 0) return;
+  e.preventDefault(); // no text selection, no drag-and-drop: the press is a selection
   start = [e.clientX, e.clientY];
   document.documentElement.setPointerCapture(e.pointerId);
   document.body.classList.add('dragging');
@@ -61,6 +62,10 @@ addEventListener('pointerup', e => {
   reset();
   if (r.width >= 4 && r.height >= 4) api.select(r);
 });
+
+// If the system takes the pointer away mid-drag, start over instead of waiting for a pointerup that won't come.
+addEventListener('pointercancel', reset);
+addEventListener('dragstart', e => e.preventDefault());
 
 addEventListener('keydown', e => {
   if (e.key === 'Escape') {

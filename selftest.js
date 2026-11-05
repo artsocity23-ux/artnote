@@ -162,6 +162,50 @@ module.exports = async function selftest({ openFromClipboard, startCapture, prep
     }
   }
 
+  // The same drag through CDP, as a pen and as a mouse. A real press on the frozen screenshot once started the
+  // browser's native image drag instead of a selection: no pointerup came, and the picker never let go. Synthetic
+  // input doesn't start that OS drag, so besides the drag itself this checks what prevents it: the screenshot
+  // takes no pointer and isn't draggable, and a dragstart is cancelled.
+  report.pickerCdp = {};
+  for (const pointerType of ['pen', 'mouse']) {
+    await wait(800);
+    const before = new Set(BrowserWindow.getAllWindows());
+    startCapture();
+    const ov = await until(() => BrowserWindow.getAllWindows().find(w => w.isVisible() && w.webContents.getURL().endsWith('overlay.html')));
+    const res = (report.pickerCdp[pointerType] = { shown: !!ov });
+    if (!ov) continue;
+    res.guard = await ov.webContents.executeJavaScript(`(() => {
+      const shot = document.getElementById('shot');
+      const drag = new DragEvent('dragstart', { bubbles: true, cancelable: true });
+      document.body.dispatchEvent(drag);
+      return { draggable: shot.draggable, pointerEvents: getComputedStyle(shot).pointerEvents, dragCancelled: drag.defaultPrevented };
+    })()`);
+    const dbg = ov.webContents.debugger;
+    dbg.attach('1.3');
+    // Chromium reports a native drag it would start instead of running it; there must be none.
+    res.nativeDrag = false;
+    dbg.on('message', (e, method) => { if (method === 'Input.dragIntercepted') res.nativeDrag = true; });
+    await dbg.sendCommand('Input.setInterceptDrags', { enabled: true });
+    const send = (type, [x, y]) => dbg.sendCommand('Input.dispatchMouseEvent', {
+      type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType,
+      ...(pointerType === 'pen' && { force: type === 'mouseReleased' ? 0 : 0.5 }),
+    });
+    const way = lerp([150, 160], [450, 400], 12);
+    await send('mousePressed', way[0]);
+    for (const p of way.slice(1)) {
+      await send('mouseMoved', p);
+      await wait(16);
+    }
+    await send('mouseReleased', way[way.length - 1]);
+    dbg.detach();
+    const ed = await until(() => BrowserWindow.getAllWindows().find(w => !before.has(w) && w.webContents.getURL().includes('/editor.html')), 4000);
+    res.editor = !!ed;
+    res.overlayHidden = !ov.isVisible();
+    if (ed) ed.destroy();
+    else ov.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); // let go of a stuck picker
+    await wait(300);
+  }
+
   // Donate window, only when a test donate file is passed with --donate <file>.
   if (process.argv.includes('--donate')) {
     const win = openDonate();
